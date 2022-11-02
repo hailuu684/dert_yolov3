@@ -1,0 +1,5 @@
+In order to run the main.py
+You should have to be in the directory /dert_coco_scripts
+run command python3 -m code_scripts.main
+
+Explain: this will show where is your top level.
