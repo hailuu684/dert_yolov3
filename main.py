@@ -7,7 +7,12 @@ from .models.transformer import build_transformer
 from .models.dert import DETR
 from .coco_dataset import build_dataset_train
 from .ultis.import_packages import *
+
+# Import functions from yolov3
 from .yolov3_models.models import build_yolov3_model
+from .yolov3_models.criterion_yolov3 import SetCriterion_Yolov3
+# import function
+from .yolov3_models.ultis import process_image_yolov3
 import os
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
@@ -76,11 +81,11 @@ def main():
             # print(loss)
 
             # # Copy the targets --> test the loss function with outputs from yolov3
-            # yolov3_target = targets.copy()
+            yolov3_target = targets.copy()
             break
 
     # Test: succeeded
-    # yolov3_target = dummy_process_output(yolov3_target)
+    yolov3_target = dummy_process_output(yolov3_target)
     # # Test criterion with yolov3 architecture
 
     # ----------------------------------------------------------------
@@ -88,18 +93,16 @@ def main():
     # ----------------------------------------------------------------
     # Create yolov3
     yolov3_module = build_yolov3_model()
-
-    # Get image from coco dataset
-    image, _ = dataset.__getitem__(20)
-
-    # import function
-    from .yolov3_models.ultis import process_image_yolov3
+    if torch.cuda.is_available():
+        yolov3_module.cuda()
+    # example image: /media/luu/coco/train2017/000000000009.jpg
+    example_image_path = '/media/luu/coco/train2017/000000000009.jpg'
 
     # Output from yolov3 module          (batch, 10647, 5 + num_class)
-    processed_image = process_image_yolov3(image)  # shape = (batch, 3, h, w)
+    processed_image = process_image_yolov3(example_image_path)  # shape = (batch, 3, h, w)
 
     # Make prediction
-    yolov3_output = yolov3_module(processed_image, torch.cuda.is_available())
+    yolov3_output = yolov3_module(processed_image.cuda(), torch.cuda.is_available())
 
     # yolo_pred_bbx
     out_bbx = yolov3_output[:, :, :4]
@@ -112,18 +115,23 @@ def main():
 
     # add to dict to feed to dert's criterion
     dict_out = {'pred_logits': out_cls.cuda(), 'pred_boxes': out_bbx.cuda(),
-                'pred_objectness': out_obj}
+                'pred_objectness': out_obj.cuda()}
 
-    # yolov3 output
-    # yolov3_out = {'pred_logits': yolov3_class.cuda(), 'pred_boxes': yolov3_bbx.cuda()}
-    # yolov3_loss = criterion(yolov3_out, yolov3_target)
-    # print(yolov3_loss)
-    # print(yolov3_target)
+    # Set up criterion
+    yolov3_criterion = SetCriterion_Yolov3(num_classes=4,
+                                           matcher=matcher,
+                                           weight_dict=weight_dict,
+                                           eos_coef=eos_coef,
+                                           losses=losses)
+
+    yolov3_loss = yolov3_criterion(dict_out, dummy_process_output(yolov3_target))
+    print(yolov3_loss)
+    # -------------------------------------------------------------------------------
 
 
 def dummy_process_output(targets):
     for target in targets:
-        target['labels'] = torch.where(target['labels'] > 5, 0, target['labels'])
+        target['labels'] = torch.where(target['labels'] > 4, 0, target['labels'])
 
     return targets
 

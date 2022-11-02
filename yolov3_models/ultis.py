@@ -1,7 +1,8 @@
 from .initialize_packages import *
 
 
-def process_image_yolov3(image):
+def process_image_yolov3(path):
+    image = cv2.imread(path)
     img = cv2.resize(image, (416,416))          #Resize to the input dimension
     img_ = img[:,:,::-1].transpose((2,0,1))  # BGR -> RGB | H X W C -> C X H X W
     img_ = img_[np.newaxis,:,:,:]/255.0       #Add a channel at 0 (for batch) | Normalise

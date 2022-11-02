@@ -184,24 +184,38 @@ class SetCriterion_Yolov3(nn.Module):
         cls_score, ind = cls_obj[:, 0], cls_obj[:, 1].int()
         size_ = max(ind) + 1
         cls_clone = torch.zeros(size=(cls_score.size(0), size_))
+
+        # (cls score: 0.4, index: 3) --> [0 0 0 0.4]
         for i in range(cls_clone.size(0)):
             # print(ind[i])
             cls_clone[i][ind[i]] = cls_score[i]
-            cls_clone[i] += torch.tensor([1e-5, 1e-5, 1e-5, 1e-5],
-                                         dtype=torch.float64)
+
         out_bbx = filtered_out[:, 1:5]
-        out_cls = cls_clone
-        # TODO: out_cls still dont have correct shape, should be (batch, num_querries, num_cls+1)
-        # TODO: add 1e-5 to cls_clone to avoid zero problems
-        # TODO: Download git and push code
-        return {'pred_boxes': out_bbx, 'pred_logits': out_cls}
+        out_cls = cls_clone  # shape = (3763, 4)
+
+        # add 1e-5 to avoid zero problems
+        out_cls = torch.where(out_cls != 0, out_cls, 1e-5)
+
+        # TODO: add 1 more dimension, this dimension should contain 0, but this is only for testing dimension
+        #  compatibility
+        add_out_cls = torch.zeros(size=(out_cls.size(0), 1))
+        add_out_cls = torch.where(add_out_cls == 0, 5.0, add_out_cls)
+
+        # (3763, num_class + 1)
+        out_cls = torch.cat((out_cls, add_out_cls), 1)
+
+        out_cls = out_cls[None, :]
+        out_bbx = out_bbx[None, :]  # TODO: from xyxy to cxcyhw, and normalize it
+        print('out_cls shape = ', out_cls.size())
+        print('out_bbx shape = ', out_bbx.size())
+        return {'pred_boxes': out_bbx.cuda(), 'pred_logits': out_cls.cuda()}
 
     def loss_labels(self, outputs, targets, indices, log=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
-        # Process outputs
-        outputs = self.pre_process_pred(outputs)
+        # # Process outputs
+        # outputs = self.pre_process_pred(outputs)
 
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
@@ -249,8 +263,8 @@ class SetCriterion_Yolov3(nn.Module):
         """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
         """
-        # Process outputs
-        outputs = self.pre_process_pred(outputs)
+        # # Process outputs
+        # outputs = self.pre_process_pred(outputs)
 
         pred_logits = outputs['pred_logits']
         device = pred_logits.device
@@ -266,8 +280,8 @@ class SetCriterion_Yolov3(nn.Module):
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
         """
-        # Process outputs
-        outputs = self.pre_process_pred(outputs)
+        # # Process outputs
+        # outputs = self.pre_process_pred(outputs)
 
         assert 'pred_boxes' in outputs
         idx = self._get_src_permutation_idx(indices)
@@ -313,6 +327,10 @@ class SetCriterion_Yolov3(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
+        # Process outputs
+        outputs = self.pre_process_pred(outputs)
+        print(outputs)
+
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets

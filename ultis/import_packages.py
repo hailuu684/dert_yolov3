@@ -26,7 +26,7 @@ import PIL
 # Github tokens: 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 2nd/ Nov/ 2022
 num_queries = 10647 # 10647: (batch, 10647, 8) output from yolov3 works
 num_classes = 4  # COCO: 91         Custom: 4
-batch_size = 5
+batch_size = 1  # Error about Cost matrix: problems here --> batch size should match to the output's batch_size
 weight_dict = {'loss_ce': 1, 'loss_bbox': 1, 'loss_giou': 0.5}
 eos_coef = 0.2
 losses = ['labels', 'boxes', 'cardinality']
