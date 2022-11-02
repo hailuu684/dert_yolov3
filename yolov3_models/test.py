@@ -1,6 +1,22 @@
+from .models import build_yolov3_model
+from .ultis import process_image_yolov3
+import torch
+from .criterion_yolov3 import SetCriterion_Yolov3
 
 
-def test_forward_once():
+def test_forward_once(yolov3_target, matcher, weight_dict, eos_coef, losses):
+    """
+    :param yolov3_target: max(yolov3_target['labels]) <= num_class defined
+    :param matcher: matcher creation
+    :param weight_dict: weight_dict creation
+    :param eos_coef: eos_coef creation
+    :param losses: losses creation
+    :return: loss
+
+    The output from yolov3 is (batch, 10647, 5 + num_class). In this test case, batch_size = 1
+    because there is only 1 image is read --> make sure set batch_size = 1 at ultils.import_packages
+    and num_queries = 10647
+    """
     yolov3_module = build_yolov3_model()
     if torch.cuda.is_available():
         yolov3_module.cuda()
@@ -33,5 +49,6 @@ def test_forward_once():
                                            eos_coef=eos_coef,
                                            losses=losses)
 
-    yolov3_loss = yolov3_criterion(dict_out, dummy_process_output(yolov3_target))
-    print(yolov3_loss)
+    yolov3_loss = yolov3_criterion(dict_out, yolov3_target)
+    return yolov3_loss
+    # print(yolov3_loss)
