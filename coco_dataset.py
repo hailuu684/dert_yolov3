@@ -1,6 +1,11 @@
+import torchvision.transforms.functional
+
 from .transforms import *
 from .ultis.ultis import collate_fn
+from .yolov3_models.ultis import *
 
+# Coco Format: [x_min, y_min, width, height]
+# Pascal_VOC Format: [x_min, y_min, x_max, y_max]
 
 class CocoDetection(torchvision.datasets.CocoDetection):
     def __init__(self, img_folder, ann_file, transforms, return_masks):
@@ -16,6 +21,29 @@ class CocoDetection(torchvision.datasets.CocoDetection):
         if self._transforms is not None:
             img, target = self._transforms(img, target)
         return img, target
+
+
+class CoCo_YOLOv3(torchvision.datasets.CocoDetection):
+    def __init__(self, img_folder, ann_file, transforms, return_masks):
+        super(CoCo_YOLOv3, self).__init__(img_folder, ann_file)
+        self._transforms = transforms
+        self.prepare = ConvertCocoPolysToMask(return_masks)
+
+    def __getitem__(self, idx):
+        img, targets = super(CoCo_YOLOv3, self).__getitem__(idx)
+        image_id = self.ids[idx]
+        targets = {'image_id': image_id, 'annotations': targets}
+        img, targets = self.prepare(img, targets)
+
+        # If transform is None, image should be converted to tensor --> default collate_fn will work
+        img = torchvision.transforms.functional.to_tensor(img)
+        if self._transforms is not None:
+            img, targets = self._transforms(img, targets)
+
+        # Convert coco format --> yolo format
+        targets['boxes'] = coco_to_yolo(targets['boxes'],
+                                        targets['size'][0], targets['size'][1])
+        return img, targets
 
 
 class ConvertCocoPolysToMask(object):
@@ -115,7 +143,6 @@ def make_coco_transforms(image_set):
 
 
 def build_dataset_train():
-
     # Make dataset
     dataset = CocoDetection(train_path, train_anno_path,
                             transforms=make_coco_transforms('train'),
@@ -126,3 +153,10 @@ def build_dataset_train():
                                    collate_fn=collate_fn, num_workers=0)
 
     return dataset, data_loader_train
+
+
+def build_yolov3_dataset():
+    dataset = CoCo_YOLOv3(train_path, train_anno_path, transforms=None, return_masks=False)
+
+    data_loader = DataLoader(dataset, batch_size, num_workers=0)
+    return dataset, data_loader

@@ -52,3 +52,4 @@ def test_forward_once(yolov3_target, matcher, weight_dict, eos_coef, losses):
     yolov3_loss = yolov3_criterion(dict_out, yolov3_target)
     return yolov3_loss
     # print(yolov3_loss)
+
