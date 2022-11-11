@@ -24,9 +24,9 @@ import glob
 import PIL
 
 # Github tokens: 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 2nd/ Nov/ 2022
-num_queries = 10647 # 10647: (batch, 10647, 8) output from yolov3 works
-num_classes = 4  # COCO: 91         Custom: 4
-batch_size = 1
+num_queries = 10647 # 10647: (batch, 10647, 8) output from yolov3 works  # DERT:(batch, 100, ...)
+num_classes = 91  # COCO: 91         Custom: 4          Darknet: 80
+batch_size = 16
 weight_dict = {'loss_ce': 1, 'loss_bbox': 1, 'loss_giou': 0.5}
 eos_coef = 0.2
 losses = ['labels', 'boxes', 'cardinality']
@@ -43,3 +43,8 @@ pre_norm = False  # choose between True or False
 # Path
 train_path = '/media/luu/coco/train2017'
 train_anno_path = '/media/luu/coco/annotations/instances_train2017.json'
+
+# For training
+lr = 0.001
+weight_decay = 1e-4
+lr_drop = 200

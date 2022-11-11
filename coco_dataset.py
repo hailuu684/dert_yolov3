@@ -6,6 +6,8 @@ from .yolov3_models.ultis import *
 
 # Coco Format: [x_min, y_min, width, height]
 # Pascal_VOC Format: [x_min, y_min, x_max, y_max]
+# Darknet label format: [label_index, cx, cy, w, h] (Relative coordinates)
+
 
 class CocoDetection(torchvision.datasets.CocoDetection):
     def __init__(self, img_folder, ann_file, transforms, return_masks):
@@ -31,18 +33,31 @@ class CoCo_YOLOv3(torchvision.datasets.CocoDetection):
 
     def __getitem__(self, idx):
         img, targets = super(CoCo_YOLOv3, self).__getitem__(idx)
+
+        # # resize image --> fit to yolov3's input
+        # img = img.resize((416, 416))
+
+        # Get index and annotations
         image_id = self.ids[idx]
         targets = {'image_id': image_id, 'annotations': targets}
         img, targets = self.prepare(img, targets)
 
-        # If transform is None, image should be converted to tensor --> default collate_fn will work
-        img = torchvision.transforms.functional.to_tensor(img)
+        # # If transform is None, image should be converted to tensor --> default collate_fn will work
+        # img = torchvision.transforms.functional.to_tensor(img)
         if self._transforms is not None:
             img, targets = self._transforms(img, targets)
 
-        # Convert coco format --> yolo format
-        targets['boxes'] = coco_to_yolo(targets['boxes'],
-                                        targets['size'][0], targets['size'][1])
+        # -------------------------------------------------------------------------------
+        # ----------------- Do we really need to convert bbx to yolo format? ------------
+        # -------------------------------------------------------------------------------
+        # format may not important in this case since we are using dert loss
+        # # Un-normalize bbox
+        # targets['boxes'] = un_normalize_bbx(targets['boxes'],
+        #                                     targets['size'][0], targets['size'][1])
+
+        # # Convert coco format --> yolo format
+        # targets['boxes'] = coco_to_yolo(targets['boxes'],
+        #                                 targets['size'][0], targets['size'][1])
         return img, targets
 
 
@@ -142,6 +157,28 @@ def make_coco_transforms(image_set):
     raise ValueError(f'unknown {image_set}')
 
 
+def make_yolo_transform(image_set):
+    normalize = Compose([
+        ToTensor(),
+        Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    if image_set == 'train':
+        return Compose([
+            RandomHorizontalFlip(),
+            Resize([416, 416]),
+            normalize,
+        ])
+
+    if image_set == 'val':
+        return Compose([
+            RandomResize([800], max_size=1333),
+            normalize,
+        ])
+
+    raise ValueError(f'unknown {image_set}')
+
+
 def build_dataset_train():
     # Make dataset
     dataset = CocoDetection(train_path, train_anno_path,
@@ -156,7 +193,9 @@ def build_dataset_train():
 
 
 def build_yolov3_dataset():
-    dataset = CoCo_YOLOv3(train_path, train_anno_path, transforms=None, return_masks=False)
+    dataset = CoCo_YOLOv3(train_path, train_anno_path,
+                          transforms=make_yolo_transform('train'), return_masks=False)
 
-    data_loader = DataLoader(dataset, batch_size, num_workers=0)
+    data_loader = DataLoader(dataset, batch_size, num_workers=0,
+                             collate_fn=collate_fn_yolov3)
     return dataset, data_loader

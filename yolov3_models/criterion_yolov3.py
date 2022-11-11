@@ -3,7 +3,8 @@ import torch
 from ..models.matcher import *
 from ..models.criterion import accuracy
 from ..box_ops import get_world_size, is_dist_avail_and_initialized
-
+from ..ultis.ultis import num_classes
+from ..yolov3_models.ultis import bbox_x1y1x2y2_to_cxcywh
 
 def unique(tensor):
     tensor_np = tensor.cpu().numpy()
@@ -44,6 +45,26 @@ def bbox_iou(box1, box2):
     return iou
 
 
+def find_divisible_number(tensor: Tensor, number: int):
+    """
+    find a divisible number of a tensor
+    :param number: integer number
+    :param tensor: shape = (..., ...)
+    :return: divisible number of a first dimension
+    """
+    first_dimension = tensor.size(0)
+    second_dimension = tensor.size(1)
+    divisible_num = first_dimension
+    # for _ in range(100):
+    #     if first_dimension % number != 0:
+    #         first_dimension += 1
+    #     else:
+    #         break
+    while divisible_num % number != 0:
+        divisible_num += 1
+    return first_dimension, second_dimension, divisible_num
+
+
 class SetCriterion_Yolov3(nn.Module):
     """ This class computes the loss for DETR.
     The process happens in two steps:
@@ -75,7 +96,6 @@ class SetCriterion_Yolov3(nn.Module):
         prediction = outputs * conf_mask
 
         box_corner = prediction.new(prediction.shape)
-        print('filtered boxes', box_corner.size())
 
         # Transform from cxcywh --> xyxy
         box_corner[:, :, 0] = (prediction[:, :, 0] - prediction[:, :, 2] / 2)
@@ -137,7 +157,7 @@ class SetCriterion_Yolov3(nn.Module):
                     except IndexError:
                         break
 
-                    # Zero out all the detections that have IoU > treshhold
+                    # Zero out all the detections that have IoU > threshold
                     iou_mask = (ious < nms_conf).float().unsqueeze(1)
                     image_pred_class[i + 1:] *= iou_mask
 
@@ -155,7 +175,7 @@ class SetCriterion_Yolov3(nn.Module):
                 else:
                     out = torch.cat(seq, 1)
                     output = torch.cat((output, out))
-        print('out shape', output.size())
+        # print('out shape', output.size())  # (56534, 8)
         try:
             return output
         except:
@@ -171,18 +191,15 @@ class SetCriterion_Yolov3(nn.Module):
         # reduce the number of not correct bounding boxes ( negative bbx, conf val < threshold)
         # filtered_out shape = (...,image_index + 4 corner coordinates + objectness score,
         #                      score of class + index of that class)
-        filtered_out = self.process_yolov3_pred(out, confidence=0.5, nms_conf=0.5)
-
-        # Need to convert to pred_logits = (batch, num_querries, num_class+1)
-        #                    pred_bbx = (batch, num_querries, 4)
+        filtered_out = self.process_yolov3_pred(out, confidence=0.5, nms_conf=0.5)  # shape = (56534,8)
 
         ## Get lables padded
         filtered_out_clone = torch.clone(filtered_out)
 
         # Get class score and obj score
-        cls_obj = filtered_out_clone[:, 6:]
+        cls_obj = filtered_out_clone[:, 6:]  # (..., 8)
         cls_score, ind = cls_obj[:, 0], cls_obj[:, 1].int()
-        size_ = max(ind) + 1
+        size_ = num_classes  # max(ind) + 1
         cls_clone = torch.zeros(size=(cls_score.size(0), size_))
 
         # (cls score: 0.4, index: 3) --> [0 0 0 0.4]
@@ -190,8 +207,8 @@ class SetCriterion_Yolov3(nn.Module):
             # print(ind[i])
             cls_clone[i][ind[i]] = cls_score[i]
 
-        out_bbx = filtered_out[:, 1:5]
-        out_cls = cls_clone  # shape = (3763, 4)
+        out_bbx = filtered_out[:, 1:5]  # filtered_out[:, 0] is image_index
+        out_cls = cls_clone  # shape = (3763, num_class)
 
         # add 1e-5 to avoid zero problems
         out_cls = torch.where(out_cls != 0, out_cls, 1e-5)
@@ -199,24 +216,56 @@ class SetCriterion_Yolov3(nn.Module):
         # TODO: add 1 more dimension, this dimension should contain 0, but this is only for testing dimension
         #  compatibility
         add_out_cls = torch.zeros(size=(out_cls.size(0), 1))
-        add_out_cls = torch.where(add_out_cls == 0, 5.0, add_out_cls)
+        add_out_cls = torch.where(add_out_cls == 0,
+                                  5.0,
+                                  add_out_cls)
 
-        # (3763, num_class + 1)
+        # (..., num_class + 1)
         out_cls = torch.cat((out_cls, add_out_cls), 1)
 
-        out_cls = out_cls[None, :]
-        out_bbx = out_bbx[None, :]  # TODO: from xyxy to cxcyhw, and normalize it
-        print('out_cls shape = ', out_cls.size())
-        print('out_bbx shape = ', out_bbx.size())
+        # Reshape: (..., ...) --> (batch_size, ..., num_class+1 for out_cls, 4 for out_bbx)
+        out_cls, out_bbx = self.reshape_output(out_cls, out_bbx)
+
+        # Convert bbx to cxcywh format
+        out_bbx = bbox_x1y1x2y2_to_cxcywh(out_bbx)
+
+        # normalize bbx
+        out_bbx = out_bbx / 416.0  # image_size = (416,416)
+
         return {'pred_boxes': out_bbx.cuda(), 'pred_logits': out_cls.cuda()}
+
+    def reshape_output(self, output_cls, output_bbx):
+        """
+        After filter out the outputs from yolov3, it is necessary to convert to the correct shapes
+        that requires by dert's matcher.
+        :param output_cls: (...,92)
+        :param output_bbx: (...,4)
+        :return: output_cls: (batch_size,...,92), output_bbx: (batch_size,...,4)
+        """
+        # Find a divisible number
+        first_dim, num_cls, division_num_cls = find_divisible_number(output_cls, batch_size)
+        _, bbx_dim, division_num_bbx = find_divisible_number(output_bbx, batch_size)
+
+        if division_num_cls > first_dim:
+            dummy_tensor_size = division_num_cls - first_dim
+
+            # create dummy tensor
+            dummy_tensor_cls = torch.zeros((dummy_tensor_size, num_cls))
+            dummy_tensor_bbx = torch.zeros((dummy_tensor_size, bbx_dim))
+
+            # concat to outputs
+            output_cls = torch.cat((output_cls.cuda(), dummy_tensor_cls.cuda()), 0)
+            output_bbx = torch.cat((output_bbx.cuda(), dummy_tensor_bbx.cuda()), 0)
+
+        # Reshape
+        output_cls = output_cls.view(batch_size, -1, num_cls)
+        output_bbx = output_bbx.view(batch_size, -1, bbx_dim)
+        return output_cls, output_bbx
 
     def loss_labels(self, outputs, targets, indices, log=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
-        # # Process outputs
-        # outputs = self.pre_process_pred(outputs)
-
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
 
@@ -263,9 +312,6 @@ class SetCriterion_Yolov3(nn.Module):
         """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
         """
-        # # Process outputs
-        # outputs = self.pre_process_pred(outputs)
-
         pred_logits = outputs['pred_logits']
         device = pred_logits.device
         tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
@@ -280,9 +326,6 @@ class SetCriterion_Yolov3(nn.Module):
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
         """
-        # # Process outputs
-        # outputs = self.pre_process_pred(outputs)
-
         assert 'pred_boxes' in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs['pred_boxes'][idx]
@@ -329,7 +372,6 @@ class SetCriterion_Yolov3(nn.Module):
         """
         # Process outputs
         outputs = self.pre_process_pred(outputs)
-        print(outputs)
 
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 

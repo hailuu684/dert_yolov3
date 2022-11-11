@@ -16,8 +16,17 @@ def test_forward_once(yolov3_target, matcher, weight_dict, eos_coef, losses):
     The output from yolov3 is (batch, 10647, 5 + num_class). In this test case, batch_size = 1
     because there is only 1 image is read --> make sure set batch_size = 1 at ultils.import_packages
     and num_queries = 10647
+
+    Set up: batch_size = 1, num_class = 4
+
+    def dummy_process_output(targets):
+        for target in targets:
+            target['labels'] = torch.where(target['labels'] >= 4, 0, target['labels'])
+
+        return targets
+
     """
-    yolov3_module = build_yolov3_model()
+    yolov3_module = build_yolov3_model(coco_dataset=False, load_weights=True)
     if torch.cuda.is_available():
         yolov3_module.cuda()
     # example image: /media/luu/coco/train2017/000000000009.jpg
@@ -52,4 +61,11 @@ def test_forward_once(yolov3_target, matcher, weight_dict, eos_coef, losses):
     yolov3_loss = yolov3_criterion(dict_out, yolov3_target)
     return yolov3_loss
     # print(yolov3_loss)
+
+
+def dummy_process_output(targets):
+    for target in targets:
+        target['labels'] = torch.where(target['labels'] >= 4, 0, target['labels'])
+
+    return targets
 

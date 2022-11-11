@@ -9,9 +9,13 @@ from .coco_dataset import build_dataset_train, build_yolov3_dataset
 from .ultis.import_packages import *
 
 # Import functions from yolov3
-from .yolov3_models.test import test_forward_once
-
+from .yolov3_models.test import test_forward_once, dummy_process_output
+from .yolov3_models.models import build_yolov3_model
+from .yolov3_models.criterion_yolov3 import SetCriterion_Yolov3
 import os
+
+# Import engine for training
+from .engine import train_one_epoch
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
@@ -45,6 +49,16 @@ def dert_model():
     dert_model = DETR(backbone=backbone, transformer=transformer, num_classes=num_classes,
                       num_queries=num_queries, aux_loss=False)
 
+    # Get parameter dicts
+    model_without_ddp = dert_model
+    param_dicts = [
+        {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
+        {
+            "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
+            "lr": lr,
+        },
+    ]
+
     # Build matcher
     matcher = build_matcher(set_cost_class=0.2,
                             set_cost_bbox=0.2,
@@ -77,7 +91,7 @@ def dert_model():
             # print(f'outputs_class shape = {outputs_class.size()}')
             # # Compute loss
             # loss = criterion(outputs, targets)
-            print(targets)
+            # print(targets)
 
             # # Copy the targets --> test the loss function with outputs from yolov3
             yolov3_target = targets.copy()
@@ -89,30 +103,68 @@ def dert_model():
     # ----------------- TEST CRITERION WITH YOLOV3 OUTPUTS -----------
     # ----------------------------------------------------------------
     # # Test compatibility
-    # # Test: succeeded
-    # yolov3_target = dummy_process_output(yolov3_target)
-    # yolov3_loss = test_forward_once(yolov3_target, matcher, weight_dict, eos_coef, losses)
-    # print(yolov3_loss)
+    # Test: succeeded
+    yolov3_target = dummy_process_output(yolov3_target)
+    yolov3_loss = test_forward_once(yolov3_target, matcher, weight_dict, eos_coef, losses)
+    print(yolov3_loss)
     # -------------------------------------------------------------------------------
 
 
 def train_yolov3_dert_loss():
+    # mAP: https://github.com/facebookresearch/detr/blob/main/util/plot_utils.py
+    # Build dataset
     dataset, dataloader = build_yolov3_dataset()
-    for count, data in enumerate(dataloader):
-        if count == 20:
-            image, targets = data
-            print(targets)
 
-            break
+    # Build yolov3 model
+    yolov3 = build_yolov3_model(coco_dataset=True, load_weights=False)
+    # TODO: remember to check batch_size in config file
 
+    # Get parameter dicts
+    model_without_ddp = yolov3
+    param_dicts = [
+        {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
+        {
+            "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
+            "lr": lr,
+        },
+    ]
 
-def dummy_process_output(targets):
-    for target in targets:
-        target['labels'] = torch.where(target['labels'] > 4, 0, target['labels'])
+    # Use GPU
+    if torch.cuda.is_available():
+        yolov3.cuda()
 
-    return targets
+    # Build matcher
+    matcher = build_matcher(set_cost_class=0.2,
+                            set_cost_bbox=0.2,
+                            set_cost_giou=0.2)
 
+    # Build criterion
+    criterion = SetCriterion_Yolov3(num_classes=num_classes,
+                                    matcher=matcher,
+                                    weight_dict=weight_dict,
+                                    eos_coef=eos_coef,
+                                    losses=losses)
+
+    # Device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Define number of epochs
+    num_epochs = 5
+
+    # Optimizer
+    optimizer = optim.AdamW(param_dicts, lr=lr,
+                            weight_decay=weight_decay)
+
+    # Lr scheduler
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, lr_drop)
+    # Start training
+    for epoch in range(num_epochs):  # TODO: change num_class in cfg file if needed
+        train_stats = train_one_epoch(yolov3, criterion, dataloader,
+                                      optimizer, device, epoch)
+
+        lr_scheduler.step()
 
 if __name__ == "__main__":
     # dert_model()
     train_yolov3_dert_loss()
+    # test()

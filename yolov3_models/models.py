@@ -3,6 +3,13 @@ import os.path
 from .initialize_packages import *
 from .parse_config import parse_cfg
 
+"""
+Change in config file:
+num_class: 696, 783, 610            || coco: 91             || custom: 4        || Darknet: 80
+last_conv_layer: 603, 689, 776      || coco: 288            || custom: 30       || Darknet: 255
+"""
+
+
 class EmptyLayer(nn.Module):
     def __init__(self):
         super(EmptyLayer, self).__init__()
@@ -118,11 +125,20 @@ def create_modules(blocks):
 
 
 def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA=True):
+    # prediction shapes
+
+    # Darknet: (batch_size, 255, 13, 13) (batch_size, 255, 26, 26) (batch_size, 255, 52, 52)
+    # with num_class=80, last_conv=255
+
+    # COCO: (batch_size, 288, 13, 13) (batch_size, 288, 26, 26) (batch_size, 288, 52, 52)
+    # with num_class=91, last_conv=288
+
+    # print('prediction size', prediction.size())
     batch_size = prediction.size(0)
     stride = inp_dim // prediction.size(2)
     grid_size = inp_dim // stride
     if grid_size == 55:
-        grid_size = 52  # temporary fix the shape problems
+        grid_size = 52  # temporary fix the shape problems with num_class=4
     bbox_attrs = 5 + num_classes
     num_anchors = len(anchors)
 
@@ -232,7 +248,7 @@ class Darknet(nn.Module):
                 # Transform
                 x = x.data
                 x = predict_transform(x, inp_dim, anchors, num_classes, CUDA)
-                print(x.size())
+
                 if not write:  # if no collector has been intialised.
                     detections = x
                     write = 1
@@ -241,9 +257,9 @@ class Darknet(nn.Module):
                     detections = torch.cat((detections, x), 1)
 
             outputs[i] = x
-        print('output shape', detections.size())
         return detections
 
+    # TODO: apply weights for coco dataset with last_conv_layer = 288 is not compatible
     def load_weights(self, weightfile):
         # Open the weights file
         fp = open(weightfile, "rb")
@@ -331,14 +347,17 @@ class Darknet(nn.Module):
                 conv.weight.data.copy_(conv_weights)
 
 
-def build_yolov3_model():
-
-    yolov3_module = Darknet('/home/luu/dert_coco_scripts/code_scripts/yolov3_models/cfg/yolov3.cfg')
-
-    weights_path = '/home/luu/dert_coco_scripts/code_scripts/yolov3_models/weights/yolov3.weights'
-    if os.path.isfile(weights_path):
-        yolov3_module.load_weights(weights_path)
+def build_yolov3_model(coco_dataset, load_weights):
+    if coco_dataset:
+        yolov3_module = Darknet('/home/luu/dert_coco_scripts/code_scripts/yolov3_models/cfg/yolov3_coco.cfg')
     else:
-        assert 'weights not found, please download weights'
+        yolov3_module = Darknet('/home/luu/dert_coco_scripts/code_scripts/yolov3_models/cfg/yolov3_custom.cfg')
+
+    if load_weights:
+        weights_path = '/home/luu/dert_coco_scripts/code_scripts/yolov3_models/weights/yolov3.weights'
+        if os.path.isfile(weights_path):
+            yolov3_module.load_weights(weights_path)
+        else:
+            assert 'weights not found, please download weights'
 
     return yolov3_module

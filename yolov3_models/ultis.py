@@ -2,6 +2,10 @@ import torch
 
 from .initialize_packages import *
 import cv2
+from typing import List
+from ..ultis.import_packages import Tensor
+from ..ultis.ultis import _max_by_axis, _onnx_nested_tensor_from_tensor_list
+import torchvision
 
 
 def process_image_yolov3(path):
@@ -52,3 +56,42 @@ def coco_to_yolo(box, image_w, image_h):
     clone_box[..., 3] = box[..., 3] / image_h
     return clone_box
 
+
+def un_normalize_bbx(box, image_w, image_h):
+    box[..., 0] = box[..., 0] * image_w
+    box[..., 1] = box[..., 1] * image_h
+    box[..., 2] = box[..., 2] * image_w
+    box[..., 3] = box[..., 3] * image_h
+    return box
+
+
+def collate_fn_yolov3(batch):
+    batch = list(zip(*batch))
+    batch[0] = tensor_from_tensor_list(batch[0])
+    return tuple(batch)
+
+
+def tensor_from_tensor_list(tensor_list: List[Tensor]):
+    # TODO make this more general
+    if tensor_list[0].ndim == 3:
+        if torchvision._is_tracing():
+            # nested_tensor_from_tensor_list() does not export well to ONNX
+            # call _onnx_nested_tensor_from_tensor_list() instead
+            return _onnx_nested_tensor_from_tensor_list(tensor_list)
+
+        # TODO make it support different-sized images
+        max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+        # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
+        # print(max_size)
+        batch_shape = [len(tensor_list)] + max_size
+        b, c, h, w = batch_shape
+        dtype = tensor_list[0].dtype
+        device = tensor_list[0].device
+        tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
+        mask = torch.ones((b, h, w), dtype=torch.bool, device=device)
+        for img, pad_img, m in zip(tensor_list, tensor, mask):
+            pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
+            m[: img.shape[1], :img.shape[2]] = False
+    else:
+        raise ValueError('not supported')
+    return tensor
