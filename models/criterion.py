@@ -81,7 +81,9 @@ class SetCriterion(nn.Module):
             # TODO this should probably be a separate loss, not hacked in this one here
             # Works for COCO dataset
             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
-
+            print('src_logits = ', src_logits[idx])
+            print('target_classes_o = ', target_classes_o)
+            print('accuracy = ', accuracy(src_logits[idx], target_classes_o)[0])
             # ------------------For custom dataset ---------------------------
             # # Works for custom dataset
             # losses['class_error'] = 100 - accuracy(src_logits[[a.type(torch.long) for a in list(idx)]],

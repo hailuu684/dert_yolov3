@@ -23,13 +23,19 @@ from typing import Optional, List
 import glob
 import PIL
 
+# Initialize dataloader
+num_worker = 0
+
 # Github tokens: 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 2nd/ Nov/ 2022
 num_queries = 10647 # 10647: (batch, 10647, 8) output from yolov3 works  # DERT:(batch, 100, ...)
 num_classes = 91  # COCO: 91         Custom: 4          Darknet: 80
 batch_size = 16
-weight_dict = {'loss_ce': 1, 'loss_bbox': 1, 'loss_giou': 0.5}
-eos_coef = 0.2
+weight_dict = {'loss_ce': 1, 'loss_bbox': 5, 'loss_giou': 2}
+eos_coef = 0.1
 losses = ['labels', 'boxes', 'cardinality']
+set_cost_class = 1
+set_cost_bbox = 5
+set_cost_giou = 2
 
 # Initialize backbone
 dropout = 0.1

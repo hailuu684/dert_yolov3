@@ -3,7 +3,7 @@ import torchvision.transforms.functional
 from .transforms import *
 from .ultis.ultis import collate_fn
 from .yolov3_models.ultis import *
-
+from .ultis.import_packages import num_worker
 # Coco Format: [x_min, y_min, width, height]
 # Pascal_VOC Format: [x_min, y_min, x_max, y_max]
 # Darknet label format: [label_index, cx, cy, w, h] (Relative coordinates)
@@ -196,6 +196,18 @@ def build_yolov3_dataset():
     dataset = CoCo_YOLOv3(train_path, train_anno_path,
                           transforms=make_yolo_transform('train'), return_masks=False)
 
-    data_loader = DataLoader(dataset, batch_size, num_workers=0,
+    data_loader = DataLoader(dataset, batch_size, num_workers=num_worker,
                              collate_fn=collate_fn_yolov3)
     return dataset, data_loader
+
+
+def build_yolov3_dataset_500():
+    dataset = CoCo_YOLOv3(train_path, train_anno_path,
+                          transforms=make_yolo_transform('train'), return_masks=False)
+
+    # Total dataset = 118287
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset,
+                                                               (len(dataset)-500, 500))
+    data_loader = DataLoader(val_dataset, batch_size, num_workers=num_worker,
+                             collate_fn=collate_fn_yolov3)
+    return val_dataset, data_loader
